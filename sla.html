@@ -1,59 +1,330 @@
-<!doctype html>
-btn.addEventListener('click', async () => {
-const url = webAppUrlInput.value.trim();
-if (!url) { setStatus('Isi Web App URL Apps Script terlebih dahulu.', 'err'); return; }
-if (!lastParsed) { setStatus('Belum ada file CSV yang dipilih / diparsing.', 'err'); return; }
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Laporan SLA — Upload CSV</title>
 
+  <!-- Bootstrap CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
 
-// cari nama kolom status sla dan Bagian asal (case-insensitive)
-const headerLower = lastHeader.map(h => h.toLowerCase());
-const idxStatus = headerLower.findIndex(h => h === 'status sla' || h === 'status_sla' || h === 'status');
-const idxBagian = headerLower.findIndex(h => h === 'bagian asal' || h === 'bagian_asal' || h === 'bagian asal' || h === 'bagian');
+  <!-- PapaParse -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <!-- html2canvas (jika butuh download JPG seperti template) -->
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <!-- SweetAlert2 -->
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
+  <style>
+    body { background: #f6f7fb; padding: 20px; }
+    .container { max-width: 1100px; background: white; border-radius: 10px; padding: 25px;
+                 box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+    #judulLaporan { font-weight: 700; font-size: 18px; text-align: center; margin-bottom: 15px; color:#000; }
+    #judulLaporan.is-history { color: #8e24aa; }
+    #copyright { text-align: center; font-size: 14px; color: #000; margin-top: 40px; margin-bottom: 10px; font-weight: 600; }
 
-if (idxStatus === -1) { setStatus('Kolom "status sla" tidak ditemukan di header CSV.', 'err'); return; }
-if (idxBagian === -1) { setStatus('Kolom "Bagian asal" tidak ditemukan di header CSV.', 'err'); return; }
+    /* Table header styling */
+    #resultTable.table thead tr th {
+      background-color: #1976d2 !important; color: white !important; text-align: center;
+      font-weight: 700; cursor: pointer; padding: 10px; user-select: none;
+      vertical-align: middle; border-color: #1565c0 !important;
+    }
+    #resultTable.table thead tr th:hover { background-color: #1565c0 !important; }
 
+    #resultTable td { text-align: center; vertical-align: middle; font-size: 0.95rem; }
+    .table-danger { background-color: #ffeaea !important; }
 
-const keyStatus = lastHeader[idxStatus];
-const keyBagian = lastHeader[idxBagian];
+    /* small UI tweaks */
+    .upload-area { display: flex; gap: 12px; align-items:center; }
+    .upload-btn { min-width: 220px; }
+    pre.preview { background:#f8fafc; border-radius:6px; padding:12px; max-height:220px; overflow:auto; white-space:pre-wrap; }
+  </style>
+</head>
 
+<body>
+<div class="container">
+  <h4><b>Laporan SLA — Rekapan "Lewat SLA"</b></h4>
+  <p>Pilih shift / mode (opsional) → Upload CSV → Sistem akan mengirim baris dengan <b>status sla = "lewat sla"</b> dan <b>Bagian asal = "store"</b> ke Google Sheet <i>Rangkuman Laporan</i>.</p>
 
-// filter baris: status sla == "lewat sla" && Bagian asal == "store"
-const filteredRows = lastParsed.filter(r => {
-const s = (r[keyStatus]||'').toString().trim().toLowerCase();
-const b = (r[keyBagian]||'').toString().trim().toLowerCase();
-return s === 'lewat sla' && b === 'store';
-});
+  <div class="mb-3 row align-items-end">
+    <div class="col-auto">
+      <label class="form-label">Mode (opsional)</label><br />
+      <select id="shiftInput" class="form-select w-auto d-inline-block">
+        <option value="">— (tidak dipakai) —</option>
+        <option value="IDX">Index hari ini</option>
+        <option value="P">P (Pagi)</option>
+        <option value="S">S (Siang)</option>
+        <option value="M">M (Malam)</option>
+      </select>
+      <div id="modeNote" class="form-text text-muted mt-1">Mode hanya untuk tampilan — tidak mempengaruhi filter SLA.</div>
+    </div>
 
+    <div class="col-md-8 text-end">
+      <label class="form-label">Web App URL (Google Apps Script)</label>
+      <input id="webAppUrl" type="url" class="form-control" 
+             value="https://script.google.com/macros/s/AKfycbz_uMg1e-5FAlKsfid8y7gnekvcxpVLt_eQk4YgFiXmwxdihQ9N812NqYDSW4agLQ7S/exec" />
+    </div>
+  </div>
 
-if (filteredRows.length === 0) { setStatus('Tidak ada baris yang memenuhi kriteria (lewat sla & Bagian asal=store).', 'err'); return; }
+  <hr>
 
+  <!-- Upload area -->
+  <div class="mb-3 upload-area">
+    <!-- Hidden file input -->
+    <input id="csvFile" type="file" accept=".csv,text/csv" style="display:none;" />
 
-// bangun array of arrays mengikuti urutan header agar dapat dimasukkan ke sheet
-const rows = filteredRows.map(r => lastHeader.map(h => r[h] || ''));
+    <!-- Single big upload button -->
+    <button id="uploadBtn" class="btn btn-primary upload-btn">
+      Pilih & Upload CSV
+    </button>
 
+    <div class="flex-grow-1">
+      <div class="text-muted">Hanya baris <b>lewat sla</b> & <b>store</b> yang akan dikirim. Proses otomatis setelah memilih file.</div>
+      <div id="statusText" class="text-success mt-1"></div>
+    </div>
+  </div>
 
-const payload = { rows: rows };
+  <!-- Preview -->
+  <div id="previewCard" class="mb-3" style="display:none;">
+    <label class="form-label">Preview (maks 10 baris)</label>
+    <pre id="preview" class="preview"></pre>
+  </div>
 
+  <div class="d-flex justify-content-end gap-2 mt-3">
+    <button id="downloadBtn" class="btn btn-outline-secondary" title="Download preview as image (whole result area)">Download JPG</button>
+  </div>
 
-setStatus('Mengirim ' + rows.length + ' baris terfilter ke Apps Script...', '');
-try {
-const resp = await fetch(url, {
-method: 'POST',
-headers: { 'Content-Type': 'application/json' },
-body: JSON.stringify(payload)
-});
-const text = await resp.text();
-if (!resp.ok) throw new Error(text || resp.statusText);
-setStatus('Berhasil: ' + text, 'ok');
-} catch (err) {
-setStatus('Gagal mengirim: ' + err.message, 'err');
+  <hr>
+
+  <div id="resultArea" class="mt-2">
+    <table id="resultTable" class="table table-bordered table-striped">
+      <thead>
+        <tr id="tableHeaderPlaceHolder">
+          <!-- header akan diisi sesuai CSV saat dikirim (atau bisa Anda set manual) -->
+          <th>No</th>
+          <th>Preview (Header CSV)</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+</div>
+
+<!-- Hidden iframe + form untuk mengirim ke GAS (menghindari CORS) -->
+<iframe name="gas_target_iframe" id="gas_target_iframe" style="display:none;"></iframe>
+
+<form id="gasForm" method="post" target="gas_target_iframe" style="display:none;">
+  <textarea name="rows" id="formRows"></textarea>
+</form>
+
+<!-- Bootstrap JS bundle -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+<script>
+/* ========== CONFIG ========== */
+// Pastikan ini diisi (sudah otomatis terisi dari input di UI)
+const DEFAULT_GAS_URL = document.getElementById('webAppUrl').value.trim();
+
+/* ========== UTILS ========== */
+function setStatus(msg, isError=false){
+  const el = document.getElementById('statusText');
+  el.textContent = msg;
+  el.className = isError ? 'text-danger mt-1' : 'text-success mt-1';
 }
+function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+
+/* ========== CSV PARSE & FILTER & SEND (form+iframe) ========== */
+const fileInput = document.getElementById('csvFile');
+const uploadBtn = document.getElementById('uploadBtn');
+const previewCard = document.getElementById('previewCard');
+const previewEl = document.getElementById('preview');
+const resultTable = document.getElementById('resultTable');
+const resultTbody = resultTable.querySelector('tbody');
+const tableHeader = document.getElementById('tableHeaderPlaceHolder');
+const gasForm = document.getElementById('gasForm');
+const formRows = document.getElementById('formRows');
+const webAppUrlInput = document.getElementById('webAppUrl');
+
+uploadBtn.addEventListener('click', ()=> fileInput.click());
+
+fileInput.addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  if(!f) return;
+  handleFile(f);
 });
 
+async function handleFile(file){
+  setStatus('Memproses file...');
+  previewCard.style.display='none';
+  resultTbody.innerHTML = '';
+  try{
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async function(results) {
+        const rows = results.data || [];
+        const header = results.meta.fields || (rows.length ? Object.keys(rows[0]) : []);
+        // show preview (first 10)
+        const previewText = rows.slice(0,10).map((r,i) => {
+          return `${i+1}. ` + header.map(h => `${h}: ${r[h]||''}`).join(' | ');
+        }).join('\\n') || '(tidak ada baris)';
+        previewEl.textContent = previewText;
+        previewCard.style.display = 'block';
 
-function setStatus(msg, type) {
-statusArea.innerHTML = '<p class="' + (type||'') + '">' + msg + '</p>';
+        // find columns case-insensitive
+        const headerLower = header.map(h => h.toString().toLowerCase().trim());
+        const idxStatus = headerLower.findIndex(h => h === 'status sla' || h === 'status_sla' || h === 'status');
+        const idxBagian = headerLower.findIndex(h => h === 'bagian asal' || h === 'bagian_asal' || h === 'bagian asal' || h === 'bagian');
+
+        if(idxStatus === -1 || idxBagian === -1){
+          setStatus('Kolom "status sla" atau "Bagian asal" tidak ditemukan pada header CSV.', true);
+          return;
+        }
+
+        const keyStatus = header[idxStatus];
+        const keyBagian = header[idxBagian];
+
+        // filter rows
+        const filtered = rows.filter(r => {
+          const s = (r[keyStatus]||'').toString().trim().toLowerCase();
+          const b = (r[keyBagian]||'').toString().trim().toLowerCase();
+          return s === 'lewat sla' && b === 'store';
+        });
+
+        if(filtered.length === 0){
+          setStatus('Tidak ada baris yang memenuhi kriteria (lewat sla & store).', true);
+          return;
+        }
+
+        // prepare rows array-of-arrays following header order
+        const outRows = filtered.map(r => header.map(h => r[h]||''));
+
+        // update table header and preview table body for user
+        renderResultPreview(header, filtered);
+
+        // send to GAS using form+iframe
+        await sendRowsViaForm(outRows);
+      },
+      error: function(err){
+        setStatus('Gagal mem-parse CSV: ' + err.message, true);
+      }
+    });
+  } catch(err){
+    setStatus('Error: ' + err.message, true);
+  }
 }
+
+function renderResultPreview(header, filteredRows){
+  // build table header
+  const thead = resultTable.querySelector('thead tr');
+  // Clear and add No + header columns
+  thead.innerHTML = '';
+  const thNo = document.createElement('th'); thNo.textContent = 'No'; thead.appendChild(thNo);
+  header.forEach(h => { const th = document.createElement('th'); th.textContent = h; thead.appendChild(th); });
+
+  // build tbody
+  resultTbody.innerHTML = '';
+  filteredRows.slice(0,50).forEach((r, idx) => {
+    const tr = document.createElement('tr');
+    const tdNo = document.createElement('td'); tdNo.textContent = idx+1; tr.appendChild(tdNo);
+    header.forEach(h => {
+      const td = document.createElement('td');
+      td.innerHTML = escapeHtml(r[h] || '');
+      tr.appendChild(td);
+    });
+    resultTbody.appendChild(tr);
+  });
+}
+
+/* ===== send via form (iframe) and wait postMessage from iframe ===== */
+function sendRowsViaForm(rows){
+  return new Promise((resolve, reject) => {
+    // show loading
+    Swal.fire({
+      title: 'Mengirim data...',
+      html: 'Sedang mengirim data ke Google Sheets. Mohon tunggu.',
+      allowOutsideClick: false,
+      didOpen: () => Swal.showLoading()
+    });
+
+    // set form value
+    formRows.value = JSON.stringify({ rows: rows });
+
+    // set form action from input (allow user to change)
+    const targetUrl = webAppUrlInput.value.trim() || DEFAULT_GAS_URL;
+    gasForm.action = targetUrl;
+
+    // handler for postMessage from iframe (Apps Script will postMessage result)
+    function onMessage(e){
+      // We accept message from any origin because Apps Script iframe response uses script that posts to parent.
+      // Optionally, you could validate e.origin if you know exact origin.
+      window.removeEventListener('message', onMessage);
+      Swal.close();
+      const data = e.data || {};
+      if(typeof data === 'string'){
+        // if Apps Script returned a simple string, show it
+        Swal.fire('Selesai', data, 'success');
+        setStatus('Selesai: ' + data, false);
+        resolve(data);
+        return;
+      }
+      if(data.status === 'OK'){
+        Swal.fire('Sukses', data.message || 'Baris berhasil ditambahkan.', 'success');
+        setStatus((data.message || 'Baris berhasil ditambahkan.'), false);
+        resolve(data);
+      } else {
+        Swal.fire('Gagal', data.message || 'Terjadi kesalahan pada server.', 'error');
+        setStatus('Gagal: ' + (data.message || 'Terjadi kesalahan.'), true);
+        reject(data);
+      }
+    }
+
+    // timeout fallback (e.g., no response)
+    const timeoutId = setTimeout(() => {
+      window.removeEventListener('message', onMessage);
+      Swal.close();
+      Swal.fire('Timeout', 'Tidak ada respon dari server. Periksa Web App atau jaringan.', 'error');
+      setStatus('Timeout mengirim ke GAS.', true);
+      reject(new Error('Timeout waiting for response'));
+    }, 30000); // 30s
+
+    // wrap onMessage to also clear timeout
+    function onMessageWrap(e){
+      clearTimeout(timeoutId);
+      onMessage(e);
+    }
+
+    window.addEventListener('message', onMessageWrap);
+
+    // submit form to hidden iframe
+    gasForm.submit();
+  });
+}
+
+/* ===== Download preview as image (optional) ===== */
+document.getElementById('downloadBtn').addEventListener('click', async () => {
+  try{
+    const area = document.querySelector("#resultArea");
+    const canvas = await html2canvas(area, { scale: 2 });
+    const link = document.createElement("a");
+    link.download = "Laporan_SLA_Preview.jpg";
+    link.href = canvas.toDataURL("image/jpeg");
+    link.click();
+  }catch(err){
+    Swal.fire('Gagal', 'Tidak dapat membuat gambar: ' + err.message, 'error');
+  }
+});
+
+/* ===== Listen to postMessage from GAS iframe for generic messages too ===== */
+window.addEventListener('message', (e) => {
+  // For debugging — no-op here because sendRowsViaForm installs its own listener.
+  // console.log('Message from iframe:', e.data);
+});
 </script>
+
+<div id="copyright">
+  © 2025 EDP Fai
+</div>
+</body>
+</html>
