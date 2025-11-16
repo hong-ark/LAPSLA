@@ -10,7 +10,7 @@
 
   <!-- PapaParse -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-  <!-- html2canvas (jika butuh download JPG seperti template) -->
+  <!-- html2canvas (opsional: download JPG) -->
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <!-- SweetAlert2 -->
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -35,7 +35,7 @@
     .table-danger { background-color: #ffeaea !important; }
 
     /* small UI tweaks */
-    .upload-area { display: flex; gap: 12px; align-items:center; }
+    .upload-area { display: flex; gap: 12px; align-items:center; flex-wrap:wrap; }
     .upload-btn { min-width: 220px; }
     pre.preview { background:#f8fafc; border-radius:6px; padding:12px; max-height:220px; overflow:auto; white-space:pre-wrap; }
   </style>
@@ -61,8 +61,8 @@
 
     <div class="col-md-8 text-end">
       <label class="form-label">Web App URL (Google Apps Script)</label>
-      <input id="webAppUrl" type="url" class="form-control" 
-             value="https://script.google.com/macros/s/AKfycbz_uMg1e-5FAlKsfid8y7gnekvcxpVLt_eQk4YgFiXmwxdihQ9N812NqYDSW4agLQ7S/exec" />
+      <!-- User dapat mengubah di sini jika tidak ingin hardcode DEFAULT_GAS_URL -->
+      <input id="webAppUrl" type="url" class="form-control" placeholder="Masukkan URL Web App (GAS) di sini jika tidak di-hardcode" />
     </div>
   </div>
 
@@ -84,10 +84,10 @@
     </div>
   </div>
 
-  <!-- Preview -->
+  <!-- Preview area -->
   <div id="previewCard" class="mb-3" style="display:none;">
     <label class="form-label">Preview (maks 10 baris)</label>
-    <pre id="preview" class="preview"></pre>
+    <pre id="preview" class="preview" aria-live="polite"></pre>
   </div>
 
   <div class="d-flex justify-content-end gap-2 mt-3">
@@ -97,10 +97,9 @@
   <hr>
 
   <div id="resultArea" class="mt-2">
-    <table id="resultTable" class="table table-bordered table-striped">
+    <table id="resultTable" class="table table-bordered table-striped table-sm">
       <thead>
         <tr id="tableHeaderPlaceHolder">
-          <!-- header akan diisi sesuai CSV saat dikirim (atau bisa Anda set manual) -->
           <th>No</th>
           <th>Preview (Header CSV)</th>
         </tr>
@@ -111,9 +110,8 @@
 
 </div>
 
-<!-- Hidden iframe + form untuk mengirim ke GAS (menghindari CORS) -->
+<!-- Hidden iframe + form untuk mengirim ke GAS (menghindari CORS preflight) -->
 <iframe name="gas_target_iframe" id="gas_target_iframe" style="display:none;"></iframe>
-
 <form id="gasForm" method="post" target="gas_target_iframe" style="display:none;">
   <textarea name="rows" id="formRows"></textarea>
 </form>
@@ -122,41 +120,55 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
-/* ========== CONFIG ========== */
-// Pastikan ini diisi (sudah otomatis terisi dari input di UI)
-const DEFAULT_GAS_URL = document.getElementById('webAppUrl').value.trim();
+/* ================= CONFIG =================
+ * Masukkan URL GAS di salah satu tempat:
+ *  - Ganti DEFAULT_GAS_URL di bawah (hardcode), atau
+ *  - Isi input "Web App URL" pada halaman (field di bagian atas)
+ * Jika kedua-duanya ada, input akan mengambil prioritas.
+ */
+const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbyCZPCWuS5qugEceim-0d0hLIwQ_x_23XR4efpF_H20q46cxCOsXPeBD_6T691CHdvp/exec'; // <-- MASUKKAN URL GAS Anda DI SINI jika ingin hardcode
+// contoh:
+// const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfy.../exec';
 
-/* ========== UTILS ========== */
+/* ================= HELPERS ================= */
+const el = id => document.getElementById(id);
+
 function setStatus(msg, isError=false){
-  const el = document.getElementById('statusText');
-  el.textContent = msg;
-  el.className = isError ? 'text-danger mt-1' : 'text-success mt-1';
+  const elStatus = el('statusText');
+  elStatus.textContent = msg;
+  elStatus.className = isError ? 'text-danger mt-1' : 'text-success mt-1';
 }
-function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
 
-/* ========== CSV PARSE & FILTER & SEND (form+iframe) ========== */
-const fileInput = document.getElementById('csvFile');
-const uploadBtn = document.getElementById('uploadBtn');
-const previewCard = document.getElementById('previewCard');
-const previewEl = document.getElementById('preview');
-const resultTable = document.getElementById('resultTable');
+function escapeHtml(s){
+  return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+}
+
+/* ============ DOM references ============ */
+const fileInput = el('csvFile');
+const uploadBtn = el('uploadBtn');
+const previewCard = el('previewCard');
+const previewEl = el('preview');
+const resultTable = el('resultTable');
 const resultTbody = resultTable.querySelector('tbody');
-const tableHeader = document.getElementById('tableHeaderPlaceHolder');
-const gasForm = document.getElementById('gasForm');
-const formRows = document.getElementById('formRows');
-const webAppUrlInput = document.getElementById('webAppUrl');
+const gasForm = el('gasForm');
+const formRows = el('formRows');
+const webAppUrlInput = el('webAppUrl');
+const downloadBtn = el('downloadBtn');
 
-uploadBtn.addEventListener('click', ()=> fileInput.click());
+/* Allow upload button to open file chooser */
+uploadBtn.addEventListener('click', () => fileInput.click());
 
+/* File selected */
 fileInput.addEventListener('change', (e) => {
-  const f = e.target.files[0];
-  if(!f) return;
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
   handleFile(f);
 });
 
+/* ===== Parse CSV, filter, preview, and send ===== */
 async function handleFile(file){
   setStatus('Memproses file...');
-  previewCard.style.display='none';
+  previewCard.style.display = 'none';
   resultTbody.innerHTML = '';
   try{
     Papa.parse(file, {
@@ -166,18 +178,16 @@ async function handleFile(file){
         const rows = results.data || [];
         const header = results.meta.fields || (rows.length ? Object.keys(rows[0]) : []);
         // show preview (first 10)
-        const previewText = rows.slice(0,10).map((r,i) => {
-          return `${i+1}. ` + header.map(h => `${h}: ${r[h]||''}`).join(' | ');
-        }).join('\\n') || '(tidak ada baris)';
+        const previewText = rows.slice(0,10).map((r,i) => `${i+1}. ` + header.map(h => `${h}: ${r[h]||''}`).join(' | ')).join('\n') || '(tidak ada baris)';
         previewEl.textContent = previewText;
         previewCard.style.display = 'block';
 
         // find columns case-insensitive
         const headerLower = header.map(h => h.toString().toLowerCase().trim());
         const idxStatus = headerLower.findIndex(h => h === 'status sla' || h === 'status_sla' || h === 'status');
-        const idxBagian = headerLower.findIndex(h => h === 'bagian asal' || h === 'bagian_asal' || h === 'bagian asal' || h === 'bagian');
+        const idxBagian = headerLower.findIndex(h => h === 'bagian asal' || h === 'bagian_asal' || h === 'bagian');
 
-        if(idxStatus === -1 || idxBagian === -1){
+        if (idxStatus === -1 || idxBagian === -1) {
           setStatus('Kolom "status sla" atau "Bagian asal" tidak ditemukan pada header CSV.', true);
           return;
         }
@@ -192,42 +202,45 @@ async function handleFile(file){
           return s === 'lewat sla' && b === 'store';
         });
 
-        if(filtered.length === 0){
+        if (filtered.length === 0) {
           setStatus('Tidak ada baris yang memenuhi kriteria (lewat sla & store).', true);
           return;
         }
 
         // prepare rows array-of-arrays following header order
-        const outRows = filtered.map(r => header.map(h => r[h]||''));
+        const outRows = filtered.map(r => header.map(h => r[h] || ''));
 
-        // update table header and preview table body for user
+        // render preview table
         renderResultPreview(header, filtered);
 
-        // send to GAS using form+iframe
-        await sendRowsViaForm(outRows);
+        // send to GAS using form + hidden iframe (avoids CORS)
+        try {
+          await sendRowsViaForm(outRows);
+        } catch (err) {
+          // sendRowsViaForm already shows SweetAlert and sets status
+          console.error(err);
+        }
       },
       error: function(err){
         setStatus('Gagal mem-parse CSV: ' + err.message, true);
       }
     });
-  } catch(err){
+  } catch (err) {
     setStatus('Error: ' + err.message, true);
   }
 }
 
+/* Render table header and rows for preview */
 function renderResultPreview(header, filteredRows){
-  // build table header
   const thead = resultTable.querySelector('thead tr');
-  // Clear and add No + header columns
   thead.innerHTML = '';
   const thNo = document.createElement('th'); thNo.textContent = 'No'; thead.appendChild(thNo);
   header.forEach(h => { const th = document.createElement('th'); th.textContent = h; thead.appendChild(th); });
 
-  // build tbody
   resultTbody.innerHTML = '';
   filteredRows.slice(0,50).forEach((r, idx) => {
     const tr = document.createElement('tr');
-    const tdNo = document.createElement('td'); tdNo.textContent = idx+1; tr.appendChild(tdNo);
+    const tdNo = document.createElement('td'); tdNo.textContent = idx + 1; tr.appendChild(tdNo);
     header.forEach(h => {
       const td = document.createElement('td');
       td.innerHTML = escapeHtml(r[h] || '');
@@ -237,10 +250,9 @@ function renderResultPreview(header, filteredRows){
   });
 }
 
-/* ===== send via form (iframe) and wait postMessage from iframe ===== */
+/* Send rows via hidden form + iframe. Returns a Promise that resolves when iframe posts message back. */
 function sendRowsViaForm(rows){
   return new Promise((resolve, reject) => {
-    // show loading
     Swal.fire({
       title: 'Mengirim data...',
       html: 'Sedang mengirim data ke Google Sheets. Mohon tunggu.',
@@ -248,39 +260,40 @@ function sendRowsViaForm(rows){
       didOpen: () => Swal.showLoading()
     });
 
-    // set form value
+    // set payload as JSON string in form
     formRows.value = JSON.stringify({ rows: rows });
 
-    // set form action from input (allow user to change)
+    // determine target URL: prefer user input, fallback to DEFAULT_GAS_URL
     const targetUrl = webAppUrlInput.value.trim() || DEFAULT_GAS_URL;
+    if (!targetUrl) {
+      Swal.close();
+      setStatus('URL Web App kosong. Masukkan URL GAS pada kolom di atas atau isi DEFAULT_GAS_URL pada kode.', true);
+      return reject(new Error('Missing GAS URL'));
+    }
     gasForm.action = targetUrl;
 
     // handler for postMessage from iframe (Apps Script will postMessage result)
     function onMessage(e){
-      // We accept message from any origin because Apps Script iframe response uses script that posts to parent.
-      // Optionally, you could validate e.origin if you know exact origin.
       window.removeEventListener('message', onMessage);
       Swal.close();
       const data = e.data || {};
-      if(typeof data === 'string'){
-        // if Apps Script returned a simple string, show it
+      if (typeof data === 'string') {
         Swal.fire('Selesai', data, 'success');
         setStatus('Selesai: ' + data, false);
-        resolve(data);
-        return;
+        return resolve(data);
       }
-      if(data.status === 'OK'){
+      if (data.status === 'OK') {
         Swal.fire('Sukses', data.message || 'Baris berhasil ditambahkan.', 'success');
         setStatus((data.message || 'Baris berhasil ditambahkan.'), false);
-        resolve(data);
+        return resolve(data);
       } else {
         Swal.fire('Gagal', data.message || 'Terjadi kesalahan pada server.', 'error');
         setStatus('Gagal: ' + (data.message || 'Terjadi kesalahan.'), true);
-        reject(data);
+        return reject(data);
       }
     }
 
-    // timeout fallback (e.g., no response)
+    // timeout fallback
     const timeoutId = setTimeout(() => {
       window.removeEventListener('message', onMessage);
       Swal.close();
@@ -289,7 +302,7 @@ function sendRowsViaForm(rows){
       reject(new Error('Timeout waiting for response'));
     }, 30000); // 30s
 
-    // wrap onMessage to also clear timeout
+    // wrap to clear timeout
     function onMessageWrap(e){
       clearTimeout(timeoutId);
       onMessage(e);
@@ -302,28 +315,27 @@ function sendRowsViaForm(rows){
   });
 }
 
-/* ===== Download preview as image (optional) ===== */
-document.getElementById('downloadBtn').addEventListener('click', async () => {
-  try{
+/* Download preview as image (optional) */
+downloadBtn.addEventListener('click', async () => {
+  try {
     const area = document.querySelector("#resultArea");
     const canvas = await html2canvas(area, { scale: 2 });
     const link = document.createElement("a");
     link.download = "Laporan_SLA_Preview.jpg";
     link.href = canvas.toDataURL("image/jpeg");
     link.click();
-  }catch(err){
+  } catch (err) {
     Swal.fire('Gagal', 'Tidak dapat membuat gambar: ' + err.message, 'error');
   }
 });
 
-/* ===== Listen to postMessage from GAS iframe for generic messages too ===== */
+/* Optional: listen to generic postMessage events (debug) */
 window.addEventListener('message', (e) => {
-  // For debugging — no-op here because sendRowsViaForm installs its own listener.
   // console.log('Message from iframe:', e.data);
 });
 </script>
 
-<div id="copyright">
+<div id="copyright" class="text-center">
   © 2025 EDP Fai
 </div>
 </body>
