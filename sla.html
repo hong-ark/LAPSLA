@@ -1,163 +1,241 @@
 <!doctype html>
 <html lang="id">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Upload CSV → Google Sheet</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Upload CSV → Laporan SLA</title>
 
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      padding: 20px;
-      max-width: 900px;
-      margin: auto;
-    }
-    h1 { font-size: 22px; }
-    label { margin-top: 14px; display: block; font-weight: bold; }
-    input[type="file"], input[type="url"], input[type="text"] {
-      width: 100%; padding: 8px; margin-top: 4px;
-    }
-    button {
-      margin-top: 16px; padding: 10px 20px;
-      font-size: 16px; cursor: pointer;
-    }
-    textarea {
-      width: 100%; min-height: 150px; margin-top: 12px;
-      font-family: monospace;
-    }
-    .ok { color: green; }
-    .err { color: red; }
-  </style>
-</head>
+  <!-- Tailwind CDN (v3) -->
+  <script src="https://cdn.tailwindcss.com"></script>
 
-<body>
-  <h1>Upload CSV → Filter data → Kirim ke Google Sheet</h1>
+  <!-- SweetAlert2 -->
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
-  <p>Halaman ini akan:</p>
-  <ul>
-    <li>Meminta file CSV</li>
-    <li>Mem-parse CSV di browser</li>
-    <li>Mencari kolom <b>status sla</b> dan <b>Bagian asal</b></li>
-    <li>Memilih hanya baris:
-      <br>• status sla = <b>lewat sla</b>
-      <br>• Bagian asal = <b>store</b>
-    </li>
-    <li>Mengirim baris-baris terfilter ke Google Sheets Anda</li>
-  </ul>
-
-  <!-- URL GAS langsung dimasukkan di sini -->
-  <label>Web App URL (Google Apps Script)</label>
-  <input id="webAppUrl" type="url"
-         value="https://script.google.com/macros/s/AKfycbxyngRC-ZbK21B4XjQQlFC8vTwLVuChjxt4-dyjPpxFvxgWmpWljhhiJtGkFahs4sQj/exec">
-
-  <label>Upload File CSV</label>
-  <input id="csvFile" type="file" accept=".csv,text/csv">
-
-  <button id="btnSend">Kirim ke Google Sheet</button>
-
-  <div id="statusArea"></div>
-
-  <h3>Preview CSV (maks 20 baris)</h3>
-  <textarea id="preview" readonly></textarea>
-
-  <!-- PapaParse untuk parsing CSV -->
+  <!-- PapaParse -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
+  <style>
+    /* Minor overrides for nicer look on GitHub Pages */
+    html,body { height:100%; background: #f8fafc; }
+  </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-6">
+  <div class="w-full max-w-3xl">
+    <div class="bg-white rounded-2xl shadow-lg p-8">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h1 class="text-2xl font-semibold text-slate-800">Upload CSV — Rekapan SLA</h1>
+          <p class="text-sm text-slate-500 mt-1">Pilih file CSV, sistem akan kirim baris dengan <span class="font-medium">status sla = &quot;lewat sla&quot;</span> dan <span class="font-medium">Bagian asal = &quot;store&quot;</span> ke Google Sheet Anda.</p>
+        </div>
+        <img src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 24 24' fill='none' stroke='%23555' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'></path><path d='M7 10l5 5 5-5'></path><path d='M12 15V3'></path></svg>" alt="icon" class="w-14 h-14 opacity-80">
+      </div>
+
+      <!-- Card: Controls -->
+      <div class="bg-slate-50 border border-slate-100 rounded-lg p-5 mb-4">
+        <label class="block text-sm text-slate-600 mb-2">Web App URL (Google Apps Script)</label>
+        <input id="webAppUrl" type="url"
+               class="w-full rounded-md border-slate-200 bg-white p-2 text-sm"
+               value="https://script.google.com/macros/s/AKfycbxyngRC-ZbK21B4XjQQlFC8vTwLVuChjxt4-dyjPpxFvxgWmpWljhhiJtGkFahs4sQj/exec" />
+
+        <div class="mt-4 flex items-center gap-4">
+          <!-- Hidden file input -->
+          <input id="csvFile" type="file" accept=".csv,text/csv" class="hidden" />
+
+          <!-- Big upload button -->
+          <button id="uploadBtn"
+                  class="inline-flex items-center gap-3 bg-sky-600 hover:bg-sky-700 text-white font-medium px-5 py-3 rounded-lg shadow"
+                  >
+            <svg id="uploadIcon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5V19a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2.5M7 10l5-5 5 5M12 5v12"/></svg>
+            <span id="uploadLabel">Pilih & Upload CSV</span>
+          </button>
+
+          <!-- small info -->
+          <div class="text-sm text-slate-500">
+            <div>Hanya baris <span class="font-medium">lewat sla</span> &amp; <span class="font-medium">store</span> yang akan dikirim.</div>
+            <div class="mt-1 text-xs">Sistem akan menambahkan baris ke sheet <b>Rangkuman Laporan</b>.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Preview area -->
+      <div id="previewCard" class="mt-4 p-4 rounded-lg border border-dashed border-slate-100 bg-white hidden">
+        <div class="flex items-start justify-between">
+          <div>
+            <h3 class="text-sm font-medium text-slate-700">Preview (maks 10 baris)</h3>
+            <p class="text-xs text-slate-500">Periksa sekilas sebelum mengirim.</p>
+          </div>
+          <button id="closePreview" class="text-xs text-slate-400 hover:text-slate-600">Close</button>
+        </div>
+        <pre id="preview" class="mt-3 text-xs text-slate-700 overflow-x-auto"></pre>
+      </div>
+
+      <div class="mt-6 text-sm text-slate-500">
+        Tips: tombol akan membuka pemilih file. Proses otomatis setelah file dipilih.
+      </div>
+    </div>
+
+    <footer class="mt-4 text-center text-xs text-slate-400">Made for SLA reporting • GitHub Pages friendly</footer>
+  </div>
+
   <script>
+    // ---- Elements ----
     const fileInput = document.getElementById('csvFile');
-    const btn = document.getElementById('btnSend');
-    const preview = document.getElementById('preview');
-    const statusArea = document.getElementById('statusArea');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const uploadLabel = document.getElementById('uploadLabel');
     const webAppUrlInput = document.getElementById('webAppUrl');
+    const previewCard = document.getElementById('previewCard');
+    const previewEl = document.getElementById('preview');
+    const closePreview = document.getElementById('closePreview');
 
-    let lastParsed = null;
-    let lastHeader = [];
+    // Helper: show SweetAlert loading
+    function showLoading(title = 'Memproses...') {
+      Swal.fire({
+        title,
+        html: 'Tunggu sebentar — jangan tutup jendela ini',
+        allowOutsideClick: false,
+        didOpen: () => {
+          Swal.showLoading();
+        }
+      });
+    }
 
-    // === Parse CSV ketika file dipilih ===
+    // Show success
+    function showSuccess(count, message) {
+      Swal.fire({
+        icon: 'success',
+        title: 'Sukses',
+        html: `<div>${count} baris berhasil ditambahkan ke Google Sheet.</div><div class="mt-2 text-sm">${message || ''}</div>`,
+        confirmButtonText: 'Tutup'
+      });
+    }
+
+    // Show error
+    function showError(title, text) {
+      Swal.fire({
+        icon: 'error',
+        title,
+        html: `<div>${text}</div>`,
+        confirmButtonText: 'Tutup'
+      });
+    }
+
+    // Click button -> open file picker
+    uploadBtn.addEventListener('click', () => {
+      fileInput.click();
+    });
+
+    // Close preview
+    closePreview.addEventListener('click', () => {
+      previewCard.classList.add('hidden');
+    });
+
+    // When file chosen
     fileInput.addEventListener('change', (e) => {
       const f = e.target.files[0];
       if (!f) return;
 
+      // Update button state
+      uploadLabel.textContent = 'Memproses file...';
+      uploadBtn.disabled = true;
+      uploadBtn.classList.add('opacity-80', 'cursor-not-allowed');
+
       Papa.parse(f, {
         header: true,
         skipEmptyLines: true,
-        complete: (results) => {
-          lastParsed = results.data;
-          lastHeader = results.meta.fields || (lastParsed.length ? Object.keys(lastParsed[0]) : []);
+        complete: async (results) => {
+          try {
+            const data = results.data || [];
+            const header = results.meta.fields || (data.length ? Object.keys(data[0]) : []);
+            // preview first 10
+            const previewText = data.slice(0,10).map((r,i) => `${i+1}. ` + header.map(h => `${h}: ${r[h]||''}`).join(' | ')).join('\\n') || '(tidak ada baris)';
+            previewEl.textContent = previewText;
+            previewCard.classList.remove('hidden');
 
-          // Preview 20 baris
-          const out = lastParsed.slice(0,20)
-            .map((r, i) =>
-              `${i+1}. ` +
-              lastHeader.map(h => `${h}: ${r[h]||''}`).join(" | ")
-            ).join("\n");
+            // find columns case-insensitive
+            const headerLower = header.map(h => h.toLowerCase());
+            const idxStatus = headerLower.findIndex(h => h === 'status sla' || h === 'status_sla' || h === 'status');
+            const idxBagian = headerLower.findIndex(h => h === 'bagian asal' || h === 'bagian_asal' || h === 'bagian');
 
-          preview.value = out || '(tidak ada data)';
-          setStatus(`File berhasil diproses. Total baris: ${lastParsed.length}`, 'ok');
+            if (idxStatus === -1 || idxBagian === -1) {
+              uploadLabel.textContent = 'Pilih & Upload CSV';
+              uploadBtn.disabled = false;
+              uploadBtn.classList.remove('opacity-80', 'cursor-not-allowed');
+              return showError('Kolom tidak ditemukan', 'Pastikan CSV memiliki kolom "status sla" dan "Bagian asal" pada header.');
+            }
+
+            const keyStatus = header[idxStatus];
+            const keyBagian = header[idxBagian];
+
+            // filter rows
+            const filtered = data.filter(r => {
+              const s = (r[keyStatus]||'').toString().trim().toLowerCase();
+              const b = (r[keyBagian]||'').toString().trim().toLowerCase();
+              return s === 'lewat sla' && b === 'store';
+            });
+
+            if (filtered.length === 0) {
+              uploadLabel.textContent = 'Pilih & Upload CSV';
+              uploadBtn.disabled = false;
+              uploadBtn.classList.remove('opacity-80', 'cursor-not-allowed');
+              return showError('Tidak ada data', 'Tidak ditemukan baris dengan status "lewat sla" dan Bagian asal = "store".');
+            }
+
+            // prepare rows as array-of-arrays following header order
+            const rows = filtered.map(r => header.map(h => r[h] || ''));
+
+            // send to GAS
+            const webAppUrl = webAppUrlInput.value.trim();
+            if (!webAppUrl) {
+              uploadLabel.textContent = 'Pilih & Upload CSV';
+              uploadBtn.disabled = false;
+              uploadBtn.classList.remove('opacity-80', 'cursor-not-allowed');
+              return showError('Web App URL kosong', 'Masukkan URL Web App Google Apps Script pada kolom di atas.');
+            }
+
+            showLoading('Mengirim data ke Google Sheet...');
+
+            // POST JSON
+            const resp = await fetch(webAppUrl, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ rows })
+            });
+
+            const text = await resp.text(); // GAS sering mengembalikan text
+            Swal.close();
+
+            if (!resp.ok) {
+              // possible CORS or server error
+              // show helpful message
+              let msg = text || resp.statusText || 'Terjadi kesalahan saat mengirim.';
+              if (resp.status === 0) {
+                msg = 'Permintaan diblokir (CORS) — coba deploy Web App dengan akses publik (Anyone, even anonymous) atau gunakan metode form POST.';
+              }
+              showError('Gagal mengirim', msg);
+            } else {
+              // success
+              showSuccess(rows.length, text);
+            }
+
+          } catch (err) {
+            Swal.close();
+            showError('Error', err.message || String(err));
+          } finally {
+            uploadLabel.textContent = 'Pilih & Upload CSV';
+            uploadBtn.disabled = false;
+            uploadBtn.classList.remove('opacity-80', 'cursor-not-allowed');
+            // clear file input to allow same file re-upload if needed
+            fileInput.value = '';
+          }
         },
-        error: (err) => setStatus(`Error parsing CSV: ${err.message}`, 'err')
+        error: (err) => {
+          uploadLabel.textContent = 'Pilih & Upload CSV';
+          uploadBtn.disabled = false;
+          uploadBtn.classList.remove('opacity-80', 'cursor-not-allowed');
+          showError('Parsing CSV gagal', err.message || 'Periksa format CSV.');
+        }
       });
     });
-
-    // === Klik Kirim ===
-    btn.addEventListener('click', async () => {
-      const url = webAppUrlInput.value.trim();
-      if (!url) return setStatus('Web App URL belum diisi.', 'err');
-      if (!lastParsed) return setStatus('Belum ada file CSV yang diupload.', 'err');
-
-      // Cari kolom
-      const headerLower = lastHeader.map(h => h.toLowerCase());
-
-      const idxStatus = headerLower.findIndex(h =>
-        h === 'status sla' || h === 'status_sla' || h === 'status'
-      );
-
-      const idxBagian = headerLower.findIndex(h =>
-        h === 'bagian asal' || h === 'bagian_asal' || h === 'bagian'
-      );
-
-      if (idxStatus === -1) return setStatus('Kolom "status sla" tidak ditemukan.', 'err');
-      if (idxBagian === -1) return setStatus('Kolom "Bagian asal" tidak ditemukan.', 'err');
-
-      const keyStatus = lastHeader[idxStatus];
-      const keyBagian = lastHeader[idxBagian];
-
-      // Filter baris
-      const filteredRows = lastParsed.filter(r => {
-        const s = (r[keyStatus] || '').trim().toLowerCase();
-        const b = (r[keyBagian] || '').trim().toLowerCase();
-        return s === 'lewat sla' && b === 'store';
-      });
-
-      if (filteredRows.length === 0)
-        return setStatus('Tidak ada baris yang memenuhi syarat (lewat sla + store).', 'err');
-
-      // Siapkan data array-of-arrays sesuai urutan header
-      const rows = filteredRows.map(r => lastHeader.map(h => r[h] || ''));
-
-      const payload = { rows };
-
-      setStatus(`Mengirim ${rows.length} baris ke Google Sheets...`);
-
-      try {
-        const resp = await fetch(url, {
-          method: 'POST',
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-
-        const text = await resp.text();
-        if (!resp.ok) throw new Error(text);
-
-        setStatus(`Berhasil mengirim: ${text}`, 'ok');
-      } catch (err) {
-        setStatus(`Gagal mengirim: ${err.message}`, 'err');
-      }
-    });
-
-    function setStatus(msg, type) {
-      statusArea.innerHTML = `<p class="${type||''}">${msg}</p>`;
-    }
   </script>
 </body>
 </html>
